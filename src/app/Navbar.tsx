@@ -2,6 +2,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function Navbar() {
   const [user, setUser] = useState<any>(null);
@@ -29,12 +30,12 @@ export default function Navbar() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <div className="flex items-center">
-            <a href="/" className="flex items-center space-x-2">
+            <Link href="/" className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-lg">P</span>
               </div>
               <span className="text-xl font-bold text-gray-900">PollMaster</span>
-            </a>
+            </Link>
           </div>
 
           {/* Navigation Links */}
