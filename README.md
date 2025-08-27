@@ -125,15 +125,15 @@ This app is optimized for Vercel deployment:
 
 ### Homepage
 Modern landing page with feature highlights and call-to-action
-
+![alt text](image.png)
 ### Dashboard
 Clean interface to manage all your polls with statistics
-
+![alt text](image-3.png)
+### Creating polls 
+![alt text](image-1.png)
 ### Poll Voting
 Intuitive voting interface with instant results
-
-### Mobile Responsive
-Perfect experience across all devices
+![alt text](image-2.png)
 
 ## 🤝 Contributing
 
@@ -141,7 +141,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🔗 Links
 
-- **Live Demo**: will add it soon 
+- **Live Demo**: [polling-app](https://polling-app-khaki-seven.vercel.app/)
 - **Repository**: https://github.com/ishtardev/polling-app
 - **Issues**: https://github.com/ishtardev/polling-app/issues
 
