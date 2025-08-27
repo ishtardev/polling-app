@@ -55,8 +55,13 @@ export default function CreatePoll() {
                 placeholder="What would you like to ask?" 
                 value={question} 
                 onChange={e => setQuestion(e.target.value)} 
-                className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200" 
-                style={{ color: '#111827', fontSize: '16px' }}
+                className="poll-input w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200 !text-black font-medium" 
+                style={{ 
+                  color: '#000000 !important', 
+                  fontSize: '16px',
+                  backgroundColor: '#ffffff',
+                  caretColor: '#000000'
+                }}
                 required 
               />
             </div>
@@ -74,8 +79,13 @@ export default function CreatePoll() {
                       placeholder={`Option ${idx + 1}`} 
                       value={opt} 
                       onChange={e => handleOptionChange(idx, e.target.value)} 
-                      className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200" 
-                      style={{ color: '#111827', fontSize: '16px' }}
+                      className="poll-input flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200 !text-black font-medium" 
+                      style={{ 
+                        color: '#000000 !important', 
+                        fontSize: '16px',
+                        backgroundColor: '#ffffff',
+                        caretColor: '#000000'
+                      }}
                       required 
                     />
                     {options.length > 2 && (
