@@ -42,3 +42,5 @@ next-env.d.ts
 
 # GitHub configuration files
 .github/
+
+.vercel
