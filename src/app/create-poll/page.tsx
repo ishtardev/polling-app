@@ -56,6 +56,7 @@ export default function CreatePoll() {
                 value={question} 
                 onChange={e => setQuestion(e.target.value)} 
                 className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200" 
+                style={{ color: '#111827', fontSize: '16px' }}
                 required 
               />
             </div>
@@ -74,6 +75,7 @@ export default function CreatePoll() {
                       value={opt} 
                       onChange={e => handleOptionChange(idx, e.target.value)} 
                       className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition duration-200" 
+                      style={{ color: '#111827', fontSize: '16px' }}
                       required 
                     />
                     {options.length > 2 && (
