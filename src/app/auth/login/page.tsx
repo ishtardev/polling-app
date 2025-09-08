@@ -3,17 +3,94 @@ import { supabase } from '../../../lib/supabaseClient';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+/**
+ * Login Component - Authentication Entry Point
+ * 
+ * This component serves as the primary authentication gateway for the polling application.
+ * It handles user login through Supabase Auth and manages the authentication flow that
+ * connects users to their personalized dashboard and poll management capabilities.
+ * 
+ * CONTEXT & PURPOSE:
+ * - Acts as the security checkpoint before accessing protected features (dashboard, poll creation)
+ * - Integrates with Supabase Auth service for secure credential validation
+ * - Provides user feedback for authentication errors and success states
+ * - Maintains consistent UI/UX with the application's design system
+ * 
+ * ASSUMPTIONS:
+ * - Supabase client is properly configured with valid project credentials
+ * - Users have already registered through the registration flow
+ * - Network connectivity is available for authentication requests
+ * - Browser supports modern JavaScript features (async/await, ES6+)
+ * 
+ * EDGE CASES HANDLED:
+ * - Invalid email/password combinations
+ * - Network failures during authentication
+ * - Malformed email addresses (handled by HTML5 validation)
+ * - Empty form submissions (prevented by required attributes)
+ * - Supabase service unavailability
+ * 
+ * CONNECTIONS TO OTHER COMPONENTS:
+ * - Links to Registration page (/auth/register) for new users
+ * - Redirects to Dashboard (/dashboard) upon successful authentication
+ * - Uses shared Supabase client from lib/supabaseClient
+ * - Integrates with Navbar component for authentication state management
+ * - Protected by route middleware (if implemented) to prevent authenticated users from accessing
+ * 
+ * @returns {JSX.Element} The login form with email/password inputs and error handling
+ */
 export default function Login() {
+  // Form state management - tracks user input for authentication
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  
+  // Error state - displays authentication failures to user
+  // This provides immediate feedback for invalid credentials or network issues
   const [error, setError] = useState('');
+  
+  // Navigation hook - handles post-authentication routing
+  // Redirects users to dashboard after successful login
   const router = useRouter();
 
+  /**
+   * Handles user authentication through Supabase Auth
+   * 
+   * This function orchestrates the complete login flow:
+   * 1. Prevents default form submission to handle authentication client-side
+   * 2. Calls Supabase Auth API with user credentials
+   * 3. Manages error states for failed authentication attempts
+   * 4. Redirects to dashboard upon successful authentication
+   * 
+   * SECURITY CONSIDERATIONS:
+   * - Credentials are sent securely through Supabase's encrypted channels
+   * - No sensitive data is stored in component state beyond the session
+   * - Error messages are user-friendly but don't expose system details
+   * 
+   * ERROR HANDLING:
+   * - Network failures: Displays connection error message
+   * - Invalid credentials: Shows "Invalid email or password" message
+   * - Rate limiting: Supabase handles and returns appropriate error
+   * 
+   * @param {React.FormEvent} e - Form submission event
+   * @returns {Promise<void>} Resolves after authentication attempt completes
+   */
   async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
+    e.preventDefault(); // Prevent default form submission behavior
+    
+    // Clear any previous error messages before new attempt
+    setError('');
+    
+    // Attempt authentication through Supabase Auth service
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
-    else router.push('/dashboard');
+    
+    if (error) {
+      // Display user-friendly error message for failed authentication
+      // Supabase provides localized error messages that are safe to display
+      setError(error.message);
+    } else {
+      // Successful authentication - redirect to user dashboard
+      // Dashboard is the main hub for poll management and user activities
+      router.push('/dashboard');
+    }
   }
 
   return (

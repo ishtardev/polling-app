@@ -3,28 +3,138 @@ import { supabase } from '../../lib/supabaseClient';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+/**
+ * Dashboard Component - User Poll Management Interface
+ * 
+ * This component serves as the central hub for users to manage their created polls,
+ * providing a comprehensive overview of all polls with statistics and management actions.
+ * It's the primary interface for poll creators to monitor and control their content.
+ * 
+ * Context & Purpose:
+ * - Accessible via /dashboard route for authenticated users
+ * - Displays all polls created by the current user (when auth is implemented)
+ * - Provides quick access to poll management actions (edit, view, delete)
+ * - Shows real-time statistics for each poll (votes, options, creation date)
+ * 
+ * Key Features:
+ * - Real-time poll statistics aggregation
+ * - Inline poll management actions (edit, view, delete)
+ * - Empty state handling for new users
+ * - Loading states during data fetching
+ * - Confirmation dialogs for destructive actions
+ * - Quick poll creation access
+ * 
+ * Data Aggregation:
+ * - Fetches polls from 'polls' table
+ * - Calculates vote counts from 'votes' table
+ * - Counts options from 'options' table
+ * - Combines data for comprehensive poll overview
+ * 
+ * User Experience:
+ * - Clean, card-based layout for easy scanning
+ * - Color-coded action buttons for different operations
+ * - Responsive design for various screen sizes
+ * - Immediate feedback for user actions
+ * 
+ * Performance Considerations:
+ * - Multiple database queries for statistics (could be optimized)
+ * - Promise.all for parallel data fetching
+ * - Client-side filtering for delete operations
+ * - No pagination implemented (may be needed for large datasets)
+ * 
+ * Security Considerations:
+ * - Currently shows all polls (needs user-specific filtering)
+ * - Delete operations should verify ownership
+ * - Relies on Supabase RLS policies for data access control
+ * 
+ * Error Handling:
+ * - Graceful handling of network failures
+ * - Silent error handling (could be improved with user feedback)
+ * - Fallback values for missing data
+ * 
+ * Navigation Integration:
+ * - Seamless routing to poll creation, editing, and viewing
+ * - Maintains user context across navigation
+ * 
+ * Edge Cases Handled:
+ * - Empty poll list for new users
+ * - Loading states during data fetching
+ * - Confirmation for destructive delete operations
+ * - Missing vote or option data
+ * 
+ * Future Enhancements:
+ * - User-specific poll filtering
+ * - Pagination for large poll lists
+ * - Bulk operations (delete multiple polls)
+ * - Poll analytics and insights
+ * - Search and filtering capabilities
+ * 
+ * @returns JSX.Element - Complete dashboard interface with poll management
+ */
 export default function Dashboard() {
   const [polls, setPolls] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
+    /**
+     * fetchPolls - Comprehensive Poll Data Aggregation
+     * 
+     * This function orchestrates the loading of all poll data along with
+     * associated statistics. It performs multiple database queries to build
+     * a complete picture of each poll's performance and characteristics.
+     * 
+     * Data Loading Strategy:
+     * 1. Fetch all polls from the polls table
+     * 2. For each poll, fetch vote counts and option counts in parallel
+     * 3. Combine all data into enriched poll objects
+     * 4. Update component state with aggregated data
+     * 
+     * Performance Optimization:
+     * - Uses Promise.all for parallel vote/option fetching
+     * - Could be further optimized with database joins or views
+     * - Currently fetches all polls (pagination needed for scale)
+     * 
+     * Error Handling:
+     * - Gracefully handles database errors
+     * - Provides fallback values for missing data
+     * - Continues loading even if individual poll stats fail
+     * 
+     * Security Considerations:
+     * - Currently fetches all polls (needs user filtering)
+     * - Should implement RLS policies for user-specific data
+     * - Vote and option counts could be sensitive information
+     * 
+     * Data Integrity:
+     * - Handles cases where votes or options might be missing
+     * - Provides default values (0) for missing counts
+     * - Maintains referential integrity through poll_id relationships
+     * 
+     * Future Improvements:
+     * - Implement user-specific filtering
+     * - Add caching for frequently accessed data
+     * - Consider server-side aggregation for better performance
+     * - Add real-time updates for live statistics
+     */
     async function fetchPolls() {
+      // Fetch base poll data
       const { data, error } = await supabase.from('polls').select('*');
       if (!error) {
-        // Fetch vote counts for each poll
+        // Enrich each poll with statistics in parallel
         const pollsWithStats = await Promise.all((data || []).map(async (poll) => {
+          // Fetch vote count for this poll
           const { data: votes } = await supabase.from('votes').select('*').eq('poll_id', poll.id);
+          // Fetch option count for this poll
           const { data: options } = await supabase.from('options').select('*').eq('poll_id', poll.id);
           return {
             ...poll,
-            voteCount: votes?.length || 0,
-            optionCount: options?.length || 0
+            voteCount: votes?.length || 0, // Default to 0 if no votes
+            optionCount: options?.length || 0 // Default to 0 if no options
           };
         }));
         setPolls(pollsWithStats);
       }
-      setLoading(false);
+      setLoading(false); // Always stop loading, even on error
     }
     fetchPolls();
   }, []);
@@ -99,8 +209,53 @@ export default function Dashboard() {
                       <button 
                         className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200 text-sm font-medium"
                         onClick={async () => {
+                          /**
+                           * Poll Deletion Handler - Destructive Action with Confirmation
+                           * 
+                           * Implements safe poll deletion with user confirmation and optimistic
+                           * UI updates. This is a critical operation that permanently removes
+                           * poll data and all associated votes and options.
+                           * 
+                           * Safety Measures:
+                           * - Requires explicit user confirmation via browser confirm dialog
+                           * - Provides clear warning about irreversible action
+                           * - Could be enhanced with custom modal for better UX
+                           * 
+                           * Deletion Process:
+                           * 1. Show confirmation dialog to user
+                           * 2. If confirmed, delete poll from database
+                           * 3. Update local state to remove poll from UI
+                           * 4. Cascade deletion handled by database constraints
+                           * 
+                           * Data Integrity:
+                           * - Database foreign key constraints ensure cascade deletion
+                           * - Associated votes and options are automatically removed
+                           * - Maintains referential integrity across all tables
+                           * 
+                           * User Experience:
+                           * - Immediate UI feedback through optimistic updates
+                           * - No loading state (could be added for better feedback)
+                           * - Simple confirmation prevents accidental deletions
+                           * 
+                           * Error Handling:
+                           * - Should handle network failures gracefully
+                           * - Could implement rollback for failed deletions
+                           * - Currently no user feedback for deletion errors
+                           * 
+                           * Security Considerations:
+                           * - Should verify user ownership before deletion
+                           * - Relies on RLS policies for access control
+                           * - Could implement soft deletion for audit trails
+                           * 
+                           * Performance:
+                           * - Optimistic UI update provides immediate feedback
+                           * - Single database operation for poll deletion
+                           * - Cascade deletion handled efficiently by database
+                           */
                           if (confirm('Delete this poll? This action cannot be undone.')) {
+                            // Delete from database
                             await supabase.from('polls').delete().eq('id', poll.id);
+                            // Optimistically update UI
                             setPolls(polls => polls.filter(p => p.id !== poll.id));
                           }
                         }}

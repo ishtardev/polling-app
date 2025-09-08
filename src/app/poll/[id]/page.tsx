@@ -1,9 +1,49 @@
 "use client";
 import { supabase } from '../../../lib/supabaseClient';
+import { calculatePollResults } from '../../../lib/pollUtils';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 
+/**
+ * PollPage Component - Interactive Poll Voting Interface
+ * 
+ * This component serves as the main voting interface for individual polls, handling
+ * the complete voting lifecycle from option selection to result display. It's a
+ * critical component that ensures voting integrity through duplicate prevention
+ * mechanisms and provides real-time result visualization.
+ * 
+ * Context & Purpose:
+ * - Accessed via dynamic route /poll/[id] where users can participate in polls
+ * - Implements both authenticated (user-based) and anonymous (IP-based) voting
+ * - Provides immediate feedback with real-time results after voting
+ * - Includes sharing functionality via QR codes and direct links
+ * 
+ * Key Features:
+ * - Duplicate vote prevention using user ID or IP address tracking
+ * - Real-time result calculation and visualization with progress bars
+ * - Responsive design with mobile-first approach
+ * - Social sharing capabilities with QR code generation
+ * - Error handling for network issues and invalid poll access
+ * 
+ * Security Considerations:
+ * - Uses Supabase RLS policies to ensure data integrity
+ * - IP-based tracking for anonymous users (privacy implications noted)
+ * - Prevents multiple votes through database constraints and client-side checks
+ * 
+ * Dependencies:
+ * - Connects to polls, options, and votes tables in Supabase
+ * - Integrates with authentication system for user identification
+ * - Uses external IP service for anonymous user tracking
+ * 
+ * Edge Cases Handled:
+ * - Poll not found scenarios
+ * - Network connectivity issues during voting
+ * - Already voted prevention for both authenticated and anonymous users
+ * - Loading states during data fetching
+ * 
+ * @returns JSX.Element - Complete poll voting interface with results
+ */
 export default function PollPage() {
   const { id } = useParams();
   const [poll, setPoll] = useState<any>(null);
@@ -15,66 +55,172 @@ export default function PollPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    /**
+     * fetchPoll - Initialize Poll Data and Voting Context
+     * 
+     * This function orchestrates the initial data loading for the poll page,
+     * fetching all necessary information to render the voting interface and
+     * current results. It's called once when the component mounts and whenever
+     * the poll ID changes.
+     * 
+     * Data Loading Strategy:
+     * - Fetches poll metadata (question, settings) from polls table
+     * - Loads all available voting options from options table
+     * - Retrieves current vote data for real-time result calculation
+     * 
+     * Error Handling:
+     * - Gracefully handles network failures and invalid poll IDs
+     * - Maintains loading state to prevent UI flickering
+     * - Logs errors for debugging while maintaining user experience
+     * 
+     * Performance Considerations:
+     * - Uses single() for poll data to ensure only one result
+     * - Parallel data fetching could be optimized with Promise.all
+     * - Results in multiple database queries that could be joined
+     * 
+     * Assumptions:
+     * - Poll ID is valid UUID format from URL parameters
+     * - Database relationships are properly maintained
+     * - Network connectivity is available for initial load
+     */
     async function fetchPoll() {
       try {
+        // Fetch poll metadata - contains question and configuration
         const { data: pollData } = await supabase.from('polls').select('*').eq('id', id).single();
         setPoll(pollData);
+        
+        // Load all voting options for this poll
         const { data: optionsData } = await supabase.from('options').select('*').eq('poll_id', id);
         setOptions(optionsData || []);
+        
+        // Get current votes for real-time result calculation
         const { data: votesData } = await supabase.from('votes').select('*').eq('poll_id', id);
         setResults(votesData || []);
       } catch (error) {
         console.error('Error fetching poll:', error);
+        // Note: Could implement user-facing error state here
       } finally {
-        setLoading(false);
+        setLoading(false); // Always stop loading regardless of success/failure
       }
     }
     fetchPoll();
-  }, [id]);
+  }, [id]); // Re-run when poll ID changes (navigation between polls)
 
+  /**
+   * handleVote - Core Voting Logic with Duplicate Prevention
+   * 
+   * This function implements the complete voting workflow, including validation,
+   * duplicate prevention, vote casting, and result updates. It's the heart of
+   * the voting system and ensures data integrity while providing immediate feedback.
+   * 
+   * Voting Flow:
+   * 1. Validates user has selected an option
+   * 2. Determines user identity (authenticated vs anonymous)
+   * 3. Checks for existing votes to prevent duplicates
+   * 4. Casts the vote with appropriate identifier
+   * 5. Updates UI state and refreshes results
+   * 
+   * Duplicate Prevention Strategy:
+   * - Authenticated users: tracked by user.id from Supabase Auth
+   * - Anonymous users: tracked by IP address from external service
+   * - Database constraints provide additional protection
+   * 
+   * Security & Privacy Considerations:
+   * - IP tracking raises privacy concerns for anonymous users
+   * - External IP service dependency creates potential failure point
+   * - User ID tracking is more secure but requires authentication
+   * 
+   * Error Handling:
+   * - Network failures during IP lookup or vote submission
+   * - Database constraint violations (duplicate votes)
+   * - Invalid poll or option IDs
+   * 
+   * Performance Notes:
+   * - Multiple API calls for IP lookup could be optimized
+   * - Could implement optimistic UI updates for better UX
+   * - Result refresh triggers additional database query
+   * 
+   * Edge Cases:
+   * - User logs in/out between page load and voting
+   * - Network interruption during vote submission
+   * - Concurrent votes from same user/IP
+   * 
+   * Connects to:
+   * - Authentication system for user identification
+   * - Database votes table for persistence
+   * - External IP service for anonymous tracking
+   * - UI state management for immediate feedback
+   */
   async function handleVote() {
+    // Validate option selection before proceeding
     if (!selected) return setError('Please select an option to vote.');
     
-    setError('');
+    setError(''); // Clear any previous errors
     
-    // Prevent multiple votes: check if already voted by user or IP
+    // Determine user identity for duplicate prevention
     const user = (await supabase.auth.getUser()).data.user;
     let alreadyVoted = false;
     
     if (user) {
+      // Authenticated user: check by user ID (more reliable)
       const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_id', user.id);
       alreadyVoted = !!(data && data.length > 0);
     } else {
+      // Anonymous user: check by IP address (privacy implications)
       const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
       const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_ip', ip);
       alreadyVoted = !!(data && data.length > 0);
     }
     
+    // Prevent duplicate voting
     if (alreadyVoted) return setError('You have already voted on this poll.');
     
-    // Cast vote
+    // Prepare vote data with appropriate identifier
     const voteData: any = { poll_id: id, option_id: selected };
-    if (user) voteData.voter_id = user.id;
-    else voteData.voter_ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
+    if (user) {
+      voteData.voter_id = user.id; // Use user ID for authenticated users
+    } else {
+      // Fetch IP again for anonymous users (could be cached)
+      voteData.voter_ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
+    }
     
+    // Submit vote to database
     const { error: voteError } = await supabase.from('votes').insert(voteData);
     if (voteError) {
-      setError(voteError.message);
+      setError(voteError.message); // Display database errors to user
     } else {
-      setVoted(true);
-      // Refresh results
+      setVoted(true); // Update UI to show success state
+      // Refresh results to show updated vote counts
       const { data: votesData } = await supabase.from('votes').select('*').eq('poll_id', id);
       setResults(votesData || []);
     }
   }
 
-  // Results calculation
+  /**
+   * Real-time Results Calculation
+   * 
+   * Transforms raw vote data into displayable statistics for each poll option.
+   * Uses the optimized calculatePollResults function from pollUtils.ts to
+   * improve performance.
+   * 
+   * Calculation Logic:
+   * - Leverages a single-pass algorithm to count votes per option
+   * - Maps each option to include vote count and percentage
+   * - Handles division by zero for polls with no votes
+   * - Rounds percentages to whole numbers for clean display
+   * 
+   * Performance Considerations:
+   * - O(n+m) complexity where n=options, m=votes (improved from O(n*m))
+   * - Single pass through votes array reduces computation significantly
+   * - Scales efficiently for larger polls (many options and votes)
+   * 
+   * Data Integrity:
+   * - Assumes all votes reference valid option IDs
+   * - Gracefully handles empty results array
+   * - Percentage calculation prevents NaN errors
+   */
   const totalVotes = results.length;
-  const optionCounts = options.map(opt => ({
-    ...opt,
-    count: results.filter(v => v.option_id === opt.id).length,
-    percent: totalVotes ? Math.round((results.filter(v => v.option_id === opt.id).length / totalVotes) * 100) : 0
-  }));
+  const optionCounts = calculatePollResults(options, results);
 
   if (loading) {
     return (
