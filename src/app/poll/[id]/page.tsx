@@ -32,39 +32,105 @@ export default function PollPage() {
     fetchPoll();
   }, [id]);
 
+  /**
+   * Handles the voting process for a poll.
+   * This function performs validation, checks for duplicate votes,
+   * records the vote, and updates the UI.
+   */
   async function handleVote() {
-    if (!selected) return setError('Please select an option to vote.');
-    
-    setError('');
-    
-    // Prevent multiple votes: check if already voted by user or IP
-    const user = (await supabase.auth.getUser()).data.user;
-    let alreadyVoted = false;
-    
-    if (user) {
-      const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_id', user.id);
-      alreadyVoted = !!(data && data.length > 0);
-    } else {
-      const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
-      const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_ip', ip);
-      alreadyVoted = !!(data && data.length > 0);
+    // 1. Validate that an option is selected.
+    if (!selected) {
+      setError('Please select an option to vote.');
+      return;
     }
-    
-    if (alreadyVoted) return setError('You have already voted on this poll.');
-    
-    // Cast vote
-    const voteData: any = { poll_id: id, option_id: selected };
-    if (user) voteData.voter_id = user.id;
-    else voteData.voter_ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
-    
-    const { error: voteError } = await supabase.from('votes').insert(voteData);
-    if (voteError) {
-      setError(voteError.message);
-    } else {
+    setError('');
+
+    try {
+      // 2. Determine the voter's identity (authenticated user or IP address).
+      const { data: { user } } = await supabase.auth.getUser();
+      let voterIdentifier: { type: 'auth' | 'anon'; value: string };
+
+      if (user) {
+        voterIdentifier = { type: 'auth', value: user.id };
+      } else {
+        // For anonymous users, fetch their IP address once.
+        const response = await fetch('https://api.ipify.org?format=json');
+        if (!response.ok) {
+          // Handle network errors during IP fetch.
+          throw new Error('Could not verify your network. Please try again.');
+        }
+        const { ip } = await response.json();
+        if (!ip) {
+          throw new Error('Could not determine your IP address for voting.');
+        }
+        voterIdentifier = { type: 'anon', value: ip };
+      }
+
+      // 3. Check if this voter has already voted on this poll.
+      // We use `select('id', { count: 'exact' })` for performance,
+      // as it only counts rows in the database instead of transferring data.
+      const voteCheckQuery = supabase
+        .from('votes')
+        .select('id', { count: 'exact' })
+        .eq('poll_id', id);
+
+      if (voterIdentifier.type === 'auth') {
+        voteCheckQuery.eq('voter_id', voterIdentifier.value);
+      } else {
+        voteCheckQuery.eq('voter_ip', voterIdentifier.value);
+      }
+
+      const { count, error: checkError } = await voteCheckQuery;
+
+      if (checkError) {
+        // This error is from the database query itself.
+        throw checkError;
+      }
+
+      if (count && count > 0) {
+        setError('You have already voted on this poll.');
+        return;
+      }
+
+      // 4. Prepare and insert the new vote.
+      const newVote = {
+        poll_id: id,
+        option_id: selected,
+        ...(voterIdentifier.type === 'auth'
+          ? { voter_id: voterIdentifier.value }
+          : { voter_ip: voterIdentifier.value }),
+      };
+
+      const { error: voteError } = await supabase.from('votes').insert(newVote);
+
+      if (voteError) {
+        // This error could be a database policy violation or other insertion issue.
+        throw voteError;
+      }
+
+      // 5. Update the UI to reflect the successful vote.
       setVoted(true);
-      // Refresh results
-      const { data: votesData } = await supabase.from('votes').select('*').eq('poll_id', id);
-      setResults(votesData || []);
+
+      // 6. Refresh the results to show the new vote.
+      // A potential future optimization is to use Supabase real-time subscriptions
+      // or to update the local state without a full re-fetch.
+      const { data: newResults, error: resultsError } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('poll_id', id);
+
+      if (resultsError) {
+        // The vote was cast, but we couldn't refresh the results.
+        // Log the error and inform the user if necessary.
+        console.error('Error fetching results after voting:', resultsError);
+        setError('Your vote was counted, but we failed to update the results.');
+      } else {
+        setResults(newResults || []);
+      }
+    } catch (error: any) {
+      // Centralized error handling for the entire voting process.
+      console.error('An error occurred during the voting process:', error);
+      setError(error.message || 'An unexpected error occurred. Please try again.');
     }
   }
 
