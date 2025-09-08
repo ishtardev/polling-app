@@ -107,12 +107,10 @@ export default function PollPage() {
   }, [id]); // Re-run when poll ID changes (navigation between polls)
 
   /**
-   * handleVote - Core Voting Logic with Duplicate Prevention
-   * 
-   * This function implements the complete voting workflow, including validation,
-   * duplicate prevention, vote casting, and result updates. It's the heart of
-   * the voting system and ensures data integrity while providing immediate feedback.
-   * 
+   * Handles the voting process for a poll.
+   * This function performs validation, checks for duplicate votes,
+   * records the vote, and updates the UI.
+   *
    * Voting Flow:
    * 1. Validates user has selected an option
    * 2. Determines user identity (authenticated vs anonymous)
@@ -120,79 +118,104 @@ export default function PollPage() {
    * 4. Casts the vote with appropriate identifier
    * 5. Updates UI state and refreshes results
    * 
-   * Duplicate Prevention Strategy:
-   * - Authenticated users: tracked by user.id from Supabase Auth
-   * - Anonymous users: tracked by IP address from external service
-   * - Database constraints provide additional protection
-   * 
    * Security & Privacy Considerations:
    * - IP tracking raises privacy concerns for anonymous users
-   * - External IP service dependency creates potential failure point
    * - User ID tracking is more secure but requires authentication
-   * 
-   * Error Handling:
-   * - Network failures during IP lookup or vote submission
-   * - Database constraint violations (duplicate votes)
-   * - Invalid poll or option IDs
-   * 
-   * Performance Notes:
-   * - Multiple API calls for IP lookup could be optimized
-   * - Could implement optimistic UI updates for better UX
-   * - Result refresh triggers additional database query
-   * 
-   * Edge Cases:
-   * - User logs in/out between page load and voting
-   * - Network interruption during vote submission
-   * - Concurrent votes from same user/IP
-   * 
-   * Connects to:
-   * - Authentication system for user identification
-   * - Database votes table for persistence
-   * - External IP service for anonymous tracking
-   * - UI state management for immediate feedback
    */
   async function handleVote() {
-    // Validate option selection before proceeding
-    if (!selected) return setError('Please select an option to vote.');
-    
-    setError(''); // Clear any previous errors
-    
-    // Determine user identity for duplicate prevention
-    const user = (await supabase.auth.getUser()).data.user;
-    let alreadyVoted = false;
-    
-    if (user) {
-      // Authenticated user: check by user ID (more reliable)
-      const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_id', user.id);
-      alreadyVoted = !!(data && data.length > 0);
-    } else {
-      // Anonymous user: check by IP address (privacy implications)
-      const ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
-      const { data } = await supabase.from('votes').select('*').eq('poll_id', id).eq('voter_ip', ip);
-      alreadyVoted = !!(data && data.length > 0);
+    // 1. Validate that an option is selected.
+    if (!selected) {
+      setError('Please select an option to vote.');
+      return;
     }
-    
-    // Prevent duplicate voting
-    if (alreadyVoted) return setError('You have already voted on this poll.');
-    
-    // Prepare vote data with appropriate identifier
-    const voteData: any = { poll_id: id, option_id: selected };
-    if (user) {
-      voteData.voter_id = user.id; // Use user ID for authenticated users
-    } else {
-      // Fetch IP again for anonymous users (could be cached)
-      voteData.voter_ip = await fetch('https://api.ipify.org?format=json').then(r => r.json()).then(j => j.ip);
-    }
-    
-    // Submit vote to database
-    const { error: voteError } = await supabase.from('votes').insert(voteData);
-    if (voteError) {
-      setError(voteError.message); // Display database errors to user
-    } else {
-      setVoted(true); // Update UI to show success state
-      // Refresh results to show updated vote counts
-      const { data: votesData } = await supabase.from('votes').select('*').eq('poll_id', id);
-      setResults(votesData || []);
+    setError('');
+
+    try {
+      // 2. Determine the voter's identity (authenticated user or IP address).
+      const { data: { user } } = await supabase.auth.getUser();
+      let voterIdentifier: { type: 'auth' | 'anon'; value: string };
+
+      if (user) {
+        voterIdentifier = { type: 'auth', value: user.id };
+      } else {
+        // For anonymous users, fetch their IP address once.
+        const response = await fetch('https://api.ipify.org?format=json');
+        if (!response.ok) {
+          // Handle network errors during IP fetch.
+          throw new Error('Could not verify your network. Please try again.');
+        }
+        const { ip } = await response.json();
+        if (!ip) {
+          throw new Error('Could not determine your IP address for voting.');
+        }
+        voterIdentifier = { type: 'anon', value: ip };
+      }
+
+      // 3. Check if this voter has already voted on this poll.
+      // We use `select('id', { count: 'exact' })` for performance,
+      // as it only counts rows in the database instead of transferring data.
+      const voteCheckQuery = supabase
+        .from('votes')
+        .select('id', { count: 'exact' })
+        .eq('poll_id', id);
+
+      if (voterIdentifier.type === 'auth') {
+        voteCheckQuery.eq('voter_id', voterIdentifier.value);
+      } else {
+        voteCheckQuery.eq('voter_ip', voterIdentifier.value);
+      }
+
+      const { count, error: checkError } = await voteCheckQuery;
+
+      if (checkError) {
+        // This error is from the database query itself.
+        throw checkError;
+      }
+
+      if (count && count > 0) {
+        setError('You have already voted on this poll.');
+        return;
+      }
+
+      // 4. Prepare and insert the new vote.
+      const newVote = {
+        poll_id: id,
+        option_id: selected,
+        ...(voterIdentifier.type === 'auth'
+          ? { voter_id: voterIdentifier.value }
+          : { voter_ip: voterIdentifier.value }),
+      };
+
+      const { error: voteError } = await supabase.from('votes').insert(newVote);
+
+      if (voteError) {
+        // This error could be a database policy violation or other insertion issue.
+        throw voteError;
+      }
+
+      // 5. Update the UI to reflect the successful vote.
+      setVoted(true);
+
+      // 6. Refresh the results to show the new vote.
+      // A potential future optimization is to use Supabase real-time subscriptions
+      // or to update the local state without a full re-fetch.
+      const { data: newResults, error: resultsError } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('poll_id', id);
+
+      if (resultsError) {
+        // The vote was cast, but we couldn't refresh the results.
+        // Log the error and inform the user if necessary.
+        console.error('Error fetching results after voting:', resultsError);
+        setError('Your vote was counted, but we failed to update the results.');
+      } else {
+        setResults(newResults || []);
+      }
+    } catch (error: any) {
+      // Centralized error handling for the entire voting process.
+      console.error('An error occurred during the voting process:', error);
+      setError(error.message || 'An unexpected error occurred. Please try again.');
     }
   }
 
