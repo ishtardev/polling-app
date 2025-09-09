@@ -1,4 +1,5 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// Use dynamic imports to avoid potential build/test environment issues
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { Database } from './database.types';
 
 // Environment variable validation
@@ -21,14 +22,37 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
   },
   global: {
-    // Add retry logic for network failures
+    // Add retry logic for network failures with per-try timeout and status code check
     fetch: (url, options) => {
       const MAX_RETRIES = 3;
+      const TIMEOUT_MS = 10000; // 10 seconds timeout per attempt
       let retries = 0;
       
       const fetchWithRetry = async (): Promise<Response> => {
         try {
-          return await fetch(url, options);
+          // Create an AbortController for timeout handling
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+          
+          // Add the signal to the fetch options
+          const fetchOptions = {
+            ...options,
+            signal: controller.signal
+          };
+          
+          // Attempt the fetch
+          const response = await fetch(url, fetchOptions);
+          clearTimeout(timeoutId);
+          
+          // Retry on specific status codes: 429 (Too Many Requests), 503 (Service Unavailable), etc.
+          if ([429, 500, 502, 503, 504].includes(response.status) && retries < MAX_RETRIES) {
+            retries++;
+            const delay = 1000 * Math.pow(2, retries - 1);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return fetchWithRetry();
+          }
+          
+          return response;
         } catch (error) {
           if (retries < MAX_RETRIES) {
             retries++;
@@ -46,11 +70,18 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   }
 });
 
-// Helper function to check if Supabase is available
+// Helper function to check if Supabase is available using HEAD request to reduce payload
 export async function checkSupabaseConnection(): Promise<boolean> {
   try {
-    const { error } = await supabase.from('polls').select('id').limit(1);
-    return !error;
+    // Use HEAD request instead of a full SELECT query to minimize data transfer
+    const response = await fetch(`${supabaseUrl}/rest/v1/polls?select=id&limit=1`, {
+      method: 'HEAD',
+      headers: {
+        'apikey': supabaseAnonKey || '',
+        'Authorization': `Bearer ${supabaseAnonKey || ''}`
+      }
+    });
+    return response.ok;
   } catch {
     return false;
   }

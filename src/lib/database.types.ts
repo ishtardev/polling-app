@@ -46,21 +46,21 @@ export interface Database {
           poll_id: string
           text: string
           created_at: string
-          order: number | null
+          position: number | null  // Renamed from 'order' to avoid SQL reserved keyword
         }
         Insert: {
           id?: string
           poll_id: string
           text: string
           created_at?: string
-          order?: number | null
+          position?: number | null  // Renamed from 'order' to avoid SQL reserved keyword
         }
         Update: {
           id?: string
           poll_id?: string
           text?: string
           created_at?: string
-          order?: number | null
+          position?: number | null  // Renamed from 'order' to avoid SQL reserved keyword
         }
       }
       votes: {
@@ -70,7 +70,7 @@ export interface Database {
           poll_id: string
           option_id: string
           voter_id: string | null
-          voter_ip: string | null
+          voter_hash: string | null  // Renamed from voter_ip and should store hashed IP addresses
         }
         Insert: {
           id?: string
@@ -78,7 +78,7 @@ export interface Database {
           poll_id: string
           option_id: string
           voter_id?: string | null
-          voter_ip?: string | null
+          voter_hash?: string | null  // Renamed from voter_ip and should store hashed IP addresses
         }
         Update: {
           id?: string
@@ -86,7 +86,7 @@ export interface Database {
           poll_id?: string
           option_id?: string
           voter_id?: string | null
-          voter_ip?: string | null
+          voter_hash?: string | null  // Renamed from voter_ip and should store hashed IP addresses
         }
       }
     }

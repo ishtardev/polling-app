@@ -148,7 +148,17 @@ export default function PollPage() {
         if (!ip) {
           throw new Error('Could not determine your IP address for voting.');
         }
-        voterIdentifier = { type: 'anon', value: ip };
+        // Hash the IP address before storing it for privacy
+        const hashIP = async (ip: string): Promise<string> => {
+          const encoder = new TextEncoder();
+          const data = encoder.encode(ip + process.env.NEXT_PUBLIC_IP_SALT);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        };
+        
+        const hashedIp = await hashIP(ip);
+        voterIdentifier = { type: 'anon', value: hashedIp };
       }
 
       // 3. Check if this voter has already voted on this poll.
@@ -162,7 +172,7 @@ export default function PollPage() {
       if (voterIdentifier.type === 'auth') {
         voteCheckQuery.eq('voter_id', voterIdentifier.value);
       } else {
-        voteCheckQuery.eq('voter_ip', voterIdentifier.value);
+        voteCheckQuery.eq('voter_hash', voterIdentifier.value); // Updated from voter_ip to voter_hash
       }
 
       const { count, error: checkError } = await voteCheckQuery;
@@ -183,7 +193,7 @@ export default function PollPage() {
         option_id: selected,
         ...(voterIdentifier.type === 'auth'
           ? { voter_id: voterIdentifier.value }
-          : { voter_ip: voterIdentifier.value }),
+          : { voter_hash: voterIdentifier.value }), // Updated from voter_ip to voter_hash
       };
 
       const { error: voteError } = await supabase.from('votes').insert(newVote);

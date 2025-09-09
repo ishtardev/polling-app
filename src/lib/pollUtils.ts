@@ -23,12 +23,8 @@ export interface PollResultItem extends PollOption {
  * @param votes - Array of cast votes
  * @returns Array of options with vote counts, percentages and leading status
  */
-export function calculatePollResults(options: PollOption[], votes: PollVote[]): PollResultItem[] {
-  if (!options || !votes) {
-    console.warn('calculatePollResults received undefined or null input');
-    return [];
-  }
-  
+export function calculatePollResults(options: PollOption[] = [], votes: PollVote[] = []): PollResultItem[] {
+  // Using default parameters instead of runtime null checks
   const totalVotes = votes.length;
   
   // Build a map of option_id -> vote count in a single pass (O(m) where m = number of votes)
@@ -38,11 +34,8 @@ export function calculatePollResults(options: PollOption[], votes: PollVote[]): 
     return counts;
   }, {});
   
-  // Find the maximum vote count to determine the leading option(s)
-  let maxCount = 0;
-  for (const optionId in voteCounts) {
-    maxCount = Math.max(maxCount, voteCounts[optionId]);
-  }
+  // Find the maximum vote count to determine the leading option(s) in one expression
+  const maxCount = Object.values(voteCounts).reduce((max, count) => Math.max(max, count), 0);
   
   // Map options with their vote counts, percentages and leading status
   const optionResults = options.map(option => {
@@ -83,8 +76,14 @@ export function generatePollSummary(results: PollResultItem[]): string {
     const leader = leadingOptions[0];
     return `"${leader.text}" is leading with ${leader.percent}% (${leader.count} votes).`;
   } else if (leadingOptions.length > 1) {
-    const tiedText = leadingOptions.map(option => `"${option.text}"`).join(" and ");
-    return `There's a tie between ${tiedText} with ${leadingOptions[0].percent}% each.`;
+    // Improved grammar for handling 3+ options in a tie
+    if (leadingOptions.length === 2) {
+      return `There's a tie between "${leadingOptions[0].text}" and "${leadingOptions[1].text}" with ${leadingOptions[0].percent}% each.`;
+    } else {
+      const allButLast = leadingOptions.slice(0, -1).map(opt => `"${opt.text}"`).join(", ");
+      const last = leadingOptions[leadingOptions.length - 1].text;
+      return `There's a tie between ${allButLast}, and "${last}" with ${leadingOptions[0].percent}% each.`;
+    }
   }
   
   return `${totalVotes} votes have been cast.`;
