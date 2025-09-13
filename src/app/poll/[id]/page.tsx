@@ -1,6 +1,7 @@
 "use client";
 import { supabase } from '../../../lib/supabaseClient';
 import { calculatePollResults } from '../../../lib/pollUtils';
+import { castVote, getPollResults } from '../../../lib/pollApi';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -86,16 +87,18 @@ export default function PollPage() {
     async function fetchPoll() {
       try {
         // Fetch poll metadata - contains question and configuration
-        const { data: pollData } = await supabase.from('polls').select('*').eq('id', id).single();
+        const { data: pollData } = await supabase.from('polls').select('*').eq('id', id as string).single();
         setPoll(pollData);
         
         // Load all voting options for this poll
-        const { data: optionsData } = await supabase.from('options').select('*').eq('poll_id', id);
+        const { data: optionsData } = await supabase.from('options').select('*').eq('poll_id', id as string);
         setOptions(optionsData || []);
         
-        // Get current votes for real-time result calculation
-        const { data: votesData } = await supabase.from('votes').select('*').eq('poll_id', id);
-        setResults(votesData || []);
+        // Get current votes and calculate results using our API function
+        const resultsResponse = await getPollResults(id as string);
+        if (resultsResponse.success && resultsResponse.results) {
+          setResults(resultsResponse.results);
+        }
       } catch (error) {
         console.error('Error fetching poll:', error);
         // Note: Could implement user-facing error state here
@@ -108,22 +111,16 @@ export default function PollPage() {
 
   /**
    * Handles the voting process for a poll.
-   * This function performs validation, checks for duplicate votes,
-   * records the vote, and updates the UI.
-   *
+   * This function performs validation and delegates to the castVote API function,
+   * then updates the UI based on the result.
+   * 
    * Voting Flow:
    * 1. Validates user has selected an option
-   * 2. Determines user identity (authenticated vs anonymous)
-   * 3. Checks for existing votes to prevent duplicates
-   * 4. Casts the vote with appropriate identifier
-   * 5. Updates UI state and refreshes results
-   * 
-   * Security & Privacy Considerations:
-   * - IP tracking raises privacy concerns for anonymous users
-   * - User ID tracking is more secure but requires authentication
+   * 2. Uses the castVote function from pollApi to handle the vote process
+   * 3. Updates UI state based on the result
    */
   async function handleVote() {
-    // 1. Validate that an option is selected.
+    // 1. Validate that an option is selected
     if (!selected) {
       setError('Please select an option to vote.');
       return;
@@ -131,99 +128,26 @@ export default function PollPage() {
     setError('');
 
     try {
-      // 2. Determine the voter's identity (authenticated user or IP address).
-      const { data: { user } } = await supabase.auth.getUser();
-      let voterIdentifier: { type: 'auth' | 'anon'; value: string };
+      // 2. Use the castVote function to handle the voting process
+      const response = await castVote({
+        pollId: id as string,
+        optionId: selected
+      });
 
-      if (user) {
-        voterIdentifier = { type: 'auth', value: user.id };
-      } else {
-        // For anonymous users, fetch their IP address once.
-        const response = await fetch('https://api.ipify.org?format=json');
-        if (!response.ok) {
-          // Handle network errors during IP fetch.
-          throw new Error('Could not verify your network. Please try again.');
-        }
-        const { ip } = await response.json();
-        if (!ip) {
-          throw new Error('Could not determine your IP address for voting.');
-        }
-        // Hash the IP address before storing it for privacy
-        const hashIP = async (ip: string): Promise<string> => {
-          const encoder = new TextEncoder();
-          const data = encoder.encode(ip + process.env.NEXT_PUBLIC_IP_SALT);
-          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-          const hashArray = Array.from(new Uint8Array(hashBuffer));
-          return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        };
+      if (response.success) {
+        // 3. Update UI to reflect the successful vote
+        setVoted(true);
         
-        const hashedIp = await hashIP(ip);
-        voterIdentifier = { type: 'anon', value: hashedIp };
-      }
-
-      // 3. Check if this voter has already voted on this poll.
-      // We use `select('id', { count: 'exact' })` for performance,
-      // as it only counts rows in the database instead of transferring data.
-      const voteCheckQuery = supabase
-        .from('votes')
-        .select('id', { count: 'exact' })
-        .eq('poll_id', id);
-
-      if (voterIdentifier.type === 'auth') {
-        voteCheckQuery.eq('voter_id', voterIdentifier.value);
+        // 4. Update the results if available
+        if (response.results) {
+          setResults(response.results);
+        }
       } else {
-        voteCheckQuery.eq('voter_hash', voterIdentifier.value); // Updated from voter_ip to voter_hash
-      }
-
-      const { count, error: checkError } = await voteCheckQuery;
-
-      if (checkError) {
-        // This error is from the database query itself.
-        throw checkError;
-      }
-
-      if (count && count > 0) {
-        setError('You have already voted on this poll.');
-        return;
-      }
-
-      // 4. Prepare and insert the new vote.
-      const newVote = {
-        poll_id: id,
-        option_id: selected,
-        ...(voterIdentifier.type === 'auth'
-          ? { voter_id: voterIdentifier.value }
-          : { voter_hash: voterIdentifier.value }), // Updated from voter_ip to voter_hash
-      };
-
-      const { error: voteError } = await supabase.from('votes').insert(newVote);
-
-      if (voteError) {
-        // This error could be a database policy violation or other insertion issue.
-        throw voteError;
-      }
-
-      // 5. Update the UI to reflect the successful vote.
-      setVoted(true);
-
-      // 6. Refresh the results to show the new vote.
-      // A potential future optimization is to use Supabase real-time subscriptions
-      // or to update the local state without a full re-fetch.
-      const { data: newResults, error: resultsError } = await supabase
-        .from('votes')
-        .select('*')
-        .eq('poll_id', id);
-
-      if (resultsError) {
-        // The vote was cast, but we couldn't refresh the results.
-        // Log the error and inform the user if necessary.
-        console.error('Error fetching results after voting:', resultsError);
-        setError('Your vote was counted, but we failed to update the results.');
-      } else {
-        setResults(newResults || []);
+        // Handle known error types
+        setError(response.message || response.error?.message || 'Failed to cast your vote.');
       }
     } catch (error: any) {
-      // Centralized error handling for the entire voting process.
+      // Centralized error handling for unexpected errors
       console.error('An error occurred during the voting process:', error);
       setError(error.message || 'An unexpected error occurred. Please try again.');
     }
