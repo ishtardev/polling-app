@@ -5,6 +5,7 @@ import { castVote, getPollResults } from '../../../lib/pollApi';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
+import { SharePoll } from '../../../components/SharePoll';
 
 /**
  * PollPage Component - Interactive Poll Voting Interface
@@ -323,16 +324,15 @@ export default function PollPage() {
                         onClick={(e) => (e.target as HTMLInputElement).select()}
                       />
                     </div>
-                    <button 
-                      onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          navigator.clipboard.writeText(window.location.href);
-                        }
-                      }}
-                      className="w-full mt-2 bg-gray-900 text-white py-2 px-4 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
-                    >
-                      Copy Link
-                    </button>
+                    {/* Replace Copy Link button with SharePoll component */}
+                    <div className="mt-2">
+                      <SharePoll 
+                        pollId={id as string}
+                        pollTitle={poll?.question || 'Poll'}
+                        buttonText="Share Poll"
+                        className="w-full bg-gray-900 text-white py-2 px-4 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
+                      />
+                    </div>
                   </div>
 
                   {totalVotes > 0 && (
